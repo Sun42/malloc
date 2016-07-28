@@ -1,0 +1,238 @@
+#include <errno.h>
+#include <stdio.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include "my.h"
+#include "mymalloc.h"
+
+static	t_header	start_free;
+static  t_header	start_alloc;
+
+static			int start;
+int	cpt = 0;
+/*
+** mini header
+*/
+void		*mymalloc(size_t taille);
+void		*myrealloc(void *ptr, size_t taille);
+void		myfree(void *ptr);
+unsigned int	get_real_size(unsigned int octets);
+int		ask_memory(unsigned int unite);
+void		my_aff_header(t_header *header);
+void		my_aff_freelist();
+t_header	*find_freeblock(unsigned int nb);
+void		insert_freelist(void *ptr);
+void		show_alloc_mem();
+
+void		*mymalloc(size_t taille)
+{
+  unsigned  int	nbblocks;
+  t_header	*cur;
+
+  cpt++;
+  nbblocks = get_real_size(taille);
+  if (!start)
+    {
+      start_free.next = &start_free;
+      start_free.size = 0;
+      start_alloc.next = &start_alloc;
+      start_alloc.size = 0;
+      start = 1;
+    }
+  if ((cur = find_freeblock(nbblocks)) == NULL)
+    {
+      if (ask_memory(nbblocks) == 0)
+	return (NULL);
+    }
+  else
+    {
+      return ((t_header *)cur + 1);
+    }
+  if ((cur = find_freeblock(nbblocks)) == NULL)
+    return (NULL);
+  else
+    {
+      return ((t_header *)cur + 1);
+    }
+}
+
+
+t_header	*find_freeblock(unsigned int nb)
+{
+  t_header	*header;
+  t_header	*prev;
+  t_header	*new_header;
+
+  prev = &start_free;
+  header = prev->next;
+  while (header != &start_free)
+    {
+      if (header->size == nb)  /*bloc parfait*/
+        {
+	  prev->next = header->next;
+	  return (header);
+        }
+      /* si block trop grand*/
+      if (header->size > nb)
+        {
+	  header->size -= nb;
+	  new_header = (t_header *)header + header->size;
+	  new_header->size = nb;
+	  return (new_header);
+        }
+      prev = header;
+      header = header->next;
+    }
+  return (NULL);
+}
+
+
+int	ask_memory(unsigned int unite)
+{
+  int		nb;
+  void		*addr;
+  t_header	*header;
+
+  if (unite <  NALLOC)
+     unite = NALLOC;
+  nb = (unite) * sizeof(t_header);
+  addr = sbrk(nb);
+  if ((char *) addr == (char *) - 1)
+    {
+      my_put_nbr_error(errno);
+      return (0);
+    }
+  header = (t_header *)addr;
+  header->size = (nb / sizeof(t_header));
+  header->next = NULL;
+  insert_freelist((void *)addr);
+  return (1);
+}
+
+void	insert_freelist(void *ptr)
+{
+  t_header	*to_insert;
+  t_header	*cur;
+  t_header	*prev;
+
+  to_insert = (t_header *) ptr;
+
+  prev = &start_free;
+  cur = prev->next;
+  while (to_insert > cur && cur != &start_free)
+    {
+      /*
+	fusion par le haut
+      if ((cur + cur->size == cur->next) && (cur->next != &start_free) && (cur != &start_free))
+	{
+	  printf("Fusion par le haut \n");
+	  cur->size += cur->next->size;
+	  cur->next = (cur->next)->next;
+	}
+       fusion par le bas
+      if ((prev + prev->size == to_insert) && (prev != &start_free) && (cur != &start_free))
+	{
+	  printf("Fusion par le bas \n");
+	  prev->size += to_insert->size;
+	  prev->next = to_insert->next;
+	}
+      */
+      prev = cur;
+      cur = cur->next;
+    }
+  to_insert->next = cur;
+  prev->next = to_insert;
+}
+
+void	myfree(void *ptr)
+{
+  /* todo some control*/
+  insert_freelist((t_header *)ptr - 1);
+}
+
+
+void	*myrealloc(void *ptr, size_t taille)
+{
+    return (ptr);
+}
+
+void	my_aff_freelist()
+{
+  t_header	*header;
+
+  header = &start_free;
+  my_aff_header(&start_free);
+  while (header->next != &start_free)
+    {
+      header = header->next;
+      my_aff_header(header);
+    }
+}
+
+void	show_alloc_mem()
+{
+  t_header	*header_free;
+  t_header	*header_alloc;
+
+  printf("start addr",
+  header_free = start_free.next;
+  while (header_free != &start_free)
+    {
+      if ((unsigned)header_free->next != (unsigned)header_free + header_free->size)
+	{
+	  printf("wallou\n");
+	}
+    /*
+     header_alloc = (unsigned)header_free
+      while (header_alloc < header_free)
+	{
+	  printf("HEADER ALLOC\n");
+
+	  }*/
+      printf("HEADER ALLOC\n");
+      
+      my_aff_header(header_free);
+      header_free = header_free->next;
+    }
+}
+
+unsigned int	get_real_size(unsigned int octets)
+{
+  unsigned int	nb;
+
+  nb = 1 + (octets / sizeof(t_header));
+  if (octets % sizeof(t_header) != 0)
+    nb++;
+  return (nb);
+}
+
+void	showmem(char *addr, int size)
+{
+  int	i;
+
+  i = 0;
+  while (i < size)
+  {
+    if (addr[i] >= ' ' && addr[i] <= '~')
+      my_putchar(addr[i]);
+    else
+      my_putchar('.');
+    i++;
+  }
+}
+
+void    my_aff_header(t_header *header)
+{
+  printf("\n\nAddr : %p\nNext : %p\nMemory : %p - %p : %dblocs(%doctets)\nShowmem:\n",
+	 (void *)header,
+	 (void *)header->next,
+	 (void *)((unsigned)header + SIZE_BLOC),
+	 (void *)((unsigned)header + SIZE_BLOC),
+	 header->size,
+	 header->size * SIZE_BLOC);
+  /*
+  showmem((char *)((unsigned)header + sizeof(t_header)), header->size * sizeof(t_header));
+  */
+}

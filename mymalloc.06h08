@@ -1,0 +1,393 @@
+#include <sys/resource.h>
+#include <sys/time.h>
+#include <string.h>
+#include <errno.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include "my.h"
+#include "mymalloc.h"
+
+static	t_header	start_free;
+static	t_header	start_alloc;
+static	void		*min_addr;
+static			int start;
+int	cpt = 0;
+/*
+** mini header
+*/
+/*
+void		*mymalloc(size_t taille);
+void		*myrealloc(void *ptr, size_t taille);
+void		myfree(void *ptr);
+*/
+
+void		*mymalloc(size_t taille);
+void		*myrealloc(void *ptr, size_t taille);
+void		myfree(void *ptr);
+
+unsigned int	get_reals(unsigned int octets);
+unsigned int	get_real_bloc(unsigned int octets);
+unsigned int	get_size(unsigned int octets);
+int		ask_memory(unsigned int unite);
+void		my_aff_header(t_header *header);
+void		my_aff_freelist();
+t_header	*find_freeblock(t_header *pstart_free, unsigned int nb);
+void		insert_freelist(void *ptr);
+void		show_alloc_mem();
+void		fusion(t_header	**prev, t_header **cur, t_header **to_insert);
+void	add_list_alloc(t_header *pstart_alloc, t_header *new_alloc, int taille);
+int		del_list_alloc(t_header *start_alloc, void *addr);
+
+void		*mymalloc(size_t taille)
+{
+  t_header	*cur;
+
+  if (taille <= 0)
+    return (NULL);
+  if (!start)
+    {
+      start_free.next = &start_free;
+      start_free.size = 0;
+      start_alloc.next = &start_alloc;
+      start_alloc.size = 0;
+      start = 1;
+      min_addr = sbrk(0);
+    }
+  if ((cur = find_freeblock(&start_free, taille)) == NULL)
+    {
+      if (ask_memory(taille) == 0)
+	return (NULL);
+    }
+  else
+    {
+      add_list_alloc(&start_alloc, cur, taille);
+      return ((t_header *)cur + 1);
+    }
+  if ((cur = find_freeblock(&start_free, taille)) == NULL)
+    return (NULL);
+  else
+    {
+      add_list_alloc(&start_alloc, cur, taille);
+      return ((t_header *)cur + 1);
+    }
+}
+
+void	add_list_alloc(t_header *pstart_alloc, t_header *new_alloc, int taille)
+{
+
+  new_alloc->next = pstart_alloc->next;
+  new_alloc->size = taille;
+  pstart_alloc->next = new_alloc;
+}
+
+int		del_list_alloc(t_header *pstart_alloc, void *addr)
+{
+  t_header	*addr_list;
+  t_header	*prev;
+
+  if (pstart_alloc->next == NULL)
+    pstart_alloc->next = pstart_alloc;
+  prev = pstart_alloc;
+  addr_list = pstart_alloc->next;
+  while (addr_list != pstart_alloc)
+  {
+    if (addr_list == addr)
+    {
+      prev->next = addr_list->next;
+      return (0);
+    }
+    prev = addr_list;
+    addr_list = addr_list->next;
+  }
+  return (-1);
+}
+
+/*
+void	add_list_free(t_header *start_free, t_header *new_free, int taille)
+{
+  new_alloc->next = start_alloc->next;
+  new_alloc->size = taille;
+  start_alloc->next = new_alloc;
+}*/
+
+t_header	*find_freeblock(t_header *pstart_free,unsigned int nb)
+{
+  t_header	*cur;
+  t_header	*prev;
+  t_header	*new_header;
+
+  prev = pstart_free;
+  cur = pstart_free->next;
+  while (cur != pstart_free)
+  {
+    if (get_size(cur->size) == get_reals(nb))  /*bloc parfait*/
+    {
+      prev->next = cur->next;
+      /* cur->size = nb;
+      cur->next = (t_header *)0x42;*/
+      return (cur);
+    }
+    /* si block trop grand*/
+    if (get_size(cur->size) > get_reals(nb))
+    {
+      cur->size -= get_reals(nb);
+      new_header = (t_header *)cur + get_size(cur->size);
+      new_header->size = nb;
+    /*	  new_header->next = new_heade  + nb;
+		  new_header->next = (t_header *)0x42;*/
+      return (new_header);
+    }
+    prev = cur;
+    cur = cur->next;
+  }
+  return (NULL);
+}
+
+
+int	ask_memory(unsigned int nb)
+{
+  void		*addr;
+  t_header	*header;
+
+  nb = get_reals(nb);
+  if (nb < NALLOC)
+     nb = NALLOC;
+  addr = sbrk(nb);
+  if ((char *) addr == (char *) - 1)
+    {
+      errno = 12;
+      return (0);
+    }
+  header = (t_header *)addr;
+  header->size = nb;
+  header->next = NULL;
+  insert_freelist((void *)addr);
+  return (1);
+}
+
+void	fusion(t_header	**prev, t_header **cur, t_header **to_insert)
+{
+  /* fusion haut*/
+  if ((*to_insert) + (*to_insert)->size == (*to_insert)->next)
+    {
+      /*
+      my_putstr("Fusion haut \n");
+      */
+      (*to_insert)->size += (*cur)->size;
+      (*to_insert)->next = (*cur)->next;
+    }
+  /* fusion bas*/
+  if ((*prev) + (*prev)->size == (*prev)->next)
+    {
+      /*
+      my_putstr("Fusion bas \n");
+      */
+      (*prev)->size += (*to_insert)->size;
+      (*prev)->next = (*to_insert)->next;
+    }
+}
+
+void	insert_freelist(void *ptr)
+{
+  t_header	*to_insert;
+  t_header	*cur;
+  t_header	*prev;
+
+  to_insert = (t_header *)ptr;
+
+prev = &start_free;
+  cur = prev->next;
+  while (to_insert > cur && cur != &start_free)
+    {
+      prev = cur;
+      cur = cur->next;
+    }
+  to_insert->size = get_size(to_insert->size);
+  to_insert->next = cur;
+  prev->next = to_insert;
+  /*fusion(&prev, &cur, &to_insert);*/
+
+}
+
+void	myfree(void *ptr)
+{
+  if (ptr == NULL)
+    return ;
+  if (del_list_alloc(&start_alloc, (t_header *)ptr - 1) < 0)
+  {
+    my_putstr("FUCKING pas trouve\n");
+    return ;
+  }
+  else
+  {
+    printf("addr : %u\nOK DEL : %u\n", (unsigned)ptr, (unsigned)((t_header *)ptr - 1));
+  }
+  insert_freelist((t_header *)ptr - 1);
+}
+
+
+int	test_memory(t_header *header)
+{
+  if (header->next == (t_header *)0x42)
+    return (1);
+  return (-1);
+}
+
+void	*myrealloc(void *ptr, size_t taille)
+{
+ t_header        *header_bloc;
+ t_header        *header_newbloc;
+ int           old_size;
+ unsigned int           nunites;
+
+ if (ptr == NULL)
+   return (mymalloc(taille));
+ header_bloc = (t_header *)ptr - 1;
+/* TEST MEMORY
+ if (header_bloc->next != (t_header *)0x42)
+ return (NULL);*/
+ if (taille == 0)
+   {
+     free(ptr);
+     return (NULL);
+   }
+ nunites = get_reals(taille);
+ old_size = (header_bloc->size - 1);
+ if (nunites > header_bloc->size)
+   {
+     if ((header_newbloc = malloc(taille)) == NULL)
+       return (NULL);
+     memcpy((void *)((t_header *)header_newbloc),(void *)((t_header *)header_bloc + 1), old_size);
+     myfree((void *)((t_header *)header_bloc + 1));
+     return ((void *)((t_header *)header_newbloc));
+   }
+ if (nunites == header_bloc->size)
+   return (ptr);
+ if (nunites < header_bloc->size)
+   {
+     header_newbloc = (t_header *)header_bloc + nunites;
+     header_newbloc->size = header_bloc->size - nunites;
+     header_bloc->size = taille;
+     myfree((void *)((t_header *)header_newbloc + 1));
+     return (ptr);
+   }
+ return (NULL);
+}
+
+void	my_put_hexa(void *addr)
+{
+  printf("%X\n", (unsigned)addr);
+}
+
+void		show_alloc_mem()
+{
+  t_header	*addr_list;
+  void		*brk;
+
+  if ((brk = sbrk(0)) < NULL)
+    return ;
+  my_putstr("Break : 0x");
+  my_put_hexa(brk);
+  my_putchar('\n');
+  addr_list = start_alloc.next;
+  while (addr_list != &start_alloc)
+  {
+    my_putstr("0x");
+    my_put_hexa(addr_list + 1);
+    my_putstr(" - 0x");
+    my_put_hexa((void *)((unsigned)(addr_list + 1) + addr_list->size));
+    my_putstr(" : ");
+    my_put_nbr(addr_list->size);
+    my_putstr(" octets\n");
+    addr_list = addr_list->next;
+  }
+}
+
+unsigned int	get_reals(unsigned int octets)
+{
+  unsigned int	nb;
+
+  nb = get_real_bloc(octets) * SIZE_BLOC;
+  return (nb);
+}
+
+unsigned int	get_size(unsigned int octets)
+{
+  unsigned int	nb;
+
+  nb = octets % SIZE_BLOC;
+  if (nb != 0)
+    octets += SIZE_BLOC - nb;
+  return (octets);
+}
+
+unsigned int	get_real_bloc(unsigned int octets)
+{
+  unsigned int	nb;
+
+  nb = 1 + (octets / SIZE_BLOC);
+  if (octets % SIZE_BLOC != 0)
+    nb++;
+  return (nb);
+}
+
+
+void    my_aff_header(t_header *header)
+{
+  my_putstr("Addr : 0x");
+  my_put_nbr((unsigned)header);
+  my_putstr("\nNext : 0x");
+  my_put_nbr((unsigned)header->next);
+  my_putstr("\nSize : ");
+  my_put_nbr(get_real_bloc(header->size));
+  my_putstr(" unites (");
+  my_put_nbr(header->size);
+  my_putstr(" -> ");
+  my_put_nbr(get_reals(header->size));
+  my_putstr(" octets)\n");
+  my_putstr("Calc : 0x");
+  my_put_nbr((unsigned)header + header->size);
+  my_putstr("\n\n\n");
+
+  /*
+  showmem((char *)((unsigned)header + sizeof(t_header)), header->size * sizeof(t_header));
+  */
+}
+
+void	my_aff_freelist()
+{
+  t_header	*header;
+
+  header = &start_free;
+  my_aff_header(&start_free);
+  while (header->next != &start_free)
+    {
+      header = header->next;
+      my_aff_header(header);
+    }
+  my_putstr("###################\n");
+}
+
+
+void	my_aff_alloclist()
+{
+  t_header	*header;
+
+  header = &start_alloc;
+  my_aff_header(&start_alloc);
+  while (header->next != &start_alloc)
+    {
+      header = header->next;
+      my_aff_header(header);
+    }
+}
+
+void	debug_showmem()
+{
+  my_putstr("------- Alloc list ---------------\n");
+  my_aff_alloclist();
+  my_putstr("-------- Free list ---------------\n");
+  my_aff_freelist();
+}
